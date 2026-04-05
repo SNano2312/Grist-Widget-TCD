@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tableau Croisé Dynamique</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --surface2: #f4f4f2;
+    --border: #e4e4e0;
+    --border-dark: #ccccc6;
+    --text: #1a1a18;
+    --text-2: #6b6b65;
+    --text-3: #a8a8a0;
+    --accent: #1a56db;
+    --accent-bg: #eff4ff;
+    --green: #0a6640;
+    --green-bg: #ecfdf5;
+    --amber: #92400e;
+    --amber-bg: #fffbeb;
+    --rose: #9f1239;
+    --rose-bg: #fff1f2;
+    --teal: #0e7490;
+    --teal-bg: #f0fdfa;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+
+  html, body {
+    height: 100%;
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ── LAYOUT ── */
+  .app {
+    display: grid;
+    grid-template-rows: 44px 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── TOPBAR ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .topbar-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .topbar-sep { color: var(--border-dark); }
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--border-dark);
+    flex-shrink: 0;
+    transition: background .3s;
+  }
+  .status-dot.live { background: #16a34a; }
+  #status-text {
+    font-size: 11px;
+    color: var(--text-3);
+  }
+  .spacer { flex: 1; }
+  .topbar select {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+  }
+  .topbar select:focus { border-color: var(--accent); }
+  .topbar label { font-size: 11px; color: var(--text-2); }
+  .btn-export {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-export:hover { background: var(--surface2); color: var(--text); border-color: var(--border-dark); }
+
+  /* ── BODY ── */
+  .body {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    overflow: hidden;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .sb-section {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sb-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sb-label-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .d-green { background: #16a34a; }
+  .d-blue  { background: var(--accent); }
+  .d-purple{ background: #7c3aed; }
+  .d-amber { background: #d97706; }
+
+  /* ── DROP ZONES ── */
+  .drop-zone {
+    min-height: 34px;
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 4px 5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: flex-start;
+    transition: all .15s;
+    background: var(--bg);
+  }
+  .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+  .drop-zone:empty::after {
+    content: attr(data-ph);
+    font-size: 11px;
+    color: var(--text-3);
+    padding: 4px 3px;
+    font-style: italic;
+  }
+
+  /* ── CHIPS ── */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: grab;
+    user-select: none;
+    transition: opacity .1s;
+    white-space: nowrap;
+    max-width: 150px;
+    overflow: hidden;
+  }
+  .chip span { overflow: hidden; text-overflow: ellipsis; }
+  .chip:hover { opacity: .8; }
+  .chip-r  { background: var(--green-bg);  color: var(--green);  border: 1px solid #bbf7d0; }
+  .chip-c  { background: var(--accent-bg); color: var(--accent); border: 1px solid #bfdbfe; }
+  .chip-v  { background: #f5f3ff;          color: #5b21b6;       border: 1px solid #ddd6fe; }
+  .chip-f  { background: var(--amber-bg);  color: var(--amber);  border: 1px solid #fde68a; }
+  .chip-rm {
+    background: none; border: none;
+    cursor: pointer; color: inherit;
+    opacity: .45; font-size: 14px; line-height: 1; padding: 0;
+    flex-shrink: 0;
+  }
+  .chip-rm:hover { opacity: 1; }
+
+  /* ── FIELD LIST ── */
+  .field-list { padding: 8px; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .field-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    cursor: grab;
+    font-size: 12px;
+    user-select: none;
+    transition: background .1s;
+    color: var(--text);
+  }
+  .field-item:hover { background: var(--surface2); border-color: var(--border); }
+  .field-item.used { opacity: .3; cursor: not-allowed; pointer-events: none; }
+  .field-type {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .ft-n { background: var(--accent-bg); color: var(--accent); }
+  .ft-s { background: var(--green-bg);  color: var(--green); }
+  .ft-d { background: var(--rose-bg);   color: var(--rose); }
+  .field-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── FILTER SELECTS ── */
+  .filter-row {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 5px;
+  }
+  .filter-row label {
+    font-size: 11px; color: var(--text-2);
+    flex-shrink: 0; max-width: 72px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 500;
+  }
+  .filter-row select {
+    flex: 1;
+    font-size: 11px;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+    min-width: 0;
+  }
+  .filter-row select:focus { border-color: var(--accent); }
+
+  /* ── MAIN AREA ── */
+  .main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .pivot-wrap {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+  }
+  .pivot-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
+  .pivot-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    color: var(--text-3);
+    text-align: center;
+    padding: 20px;
+  }
+  .empty-icon {
+    width: 48px; height: 48px;
+    border: 1.5px dashed var(--border-dark);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  .empty-state p { font-size: 12px; max-width: 240px; line-height: 1.6; }
+  .empty-state strong { color: var(--text-2); font-weight: 500; }
+
+  /* ── LOADING ── */
+  .loading {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; gap: 10px; color: var(--text-2);
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── PIVOT TABLE ── */
+  .pvt-table {
+    border-collapse: collapse;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    background: var(--surface);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    min-width: 100%;
+  }
+
+  .pvt-table th, .pvt-table td {
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    white-space: nowrap;
+  }
+  .pvt-table th {
+    background: var(--surface2);
+    font-weight: 500;
+    text-align: left;
+    position: sticky; top: 0; z-index: 2;
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .pvt-table th.col-h { text-align: center; color: var(--accent); }
+  .pvt-table th.row-h { left: 0; z-index: 3; }
+
+  .pvt-table td.row-label {
+    background: var(--surface);
+    font-weight: 500;
+    position: sticky; left: 0; z-index: 1;
+    color: var(--text);
+    border-right: 2px solid var(--border);
+  }
+  .pvt-table tbody tr:nth-child(even) td.row-label { background: #fafaf9; }
+  .pvt-table tbody tr:hover td { background: #f0f9ff; }
+  .pvt-table tbody tr:hover td.row-label { background: #e0f2fe; }
+
+  .pvt-table td.val { text-align: right; color: var(--text-2); }
+  .pvt-table td.val.has-val { color: var(--text); }
+  .pvt-table td.null-val { text-align: right; color: var(--border-dark); }
+
+  .pvt-table tfoot th, .pvt-table tfoot td {
+    background: #f0fdf4;
+    font-weight: 500;
+    color: var(--green);
+    position: sticky; bottom: 0;
+    border-top: 2px solid #bbf7d0;
+    font-size: 12px;
+  }
+  .pvt-table tfoot th { z-index: 3; left: 0; }
+  .pvt-table .grand-total { color: var(--green) !important; font-weight: 600; }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: flex; gap: 16px; align-items: center;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .stat-item { display: flex; gap: 5px; align-items: baseline; }
+  .stat-val { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500; color: var(--text); }
+  .stat-lbl { font-size: 11px; color: var(--text-3); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <span class="topbar-title">TCD</span>
+    <span class="topbar-sep">/</span>
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">En attente de Grist…</span>
+    <div class="spacer"></div>
+    <label>Agrégation</label>
+    <select id="agg-sel" onchange="buildPivot()">
+      <option value="sum">Somme</option>
+      <option value="cnt">Nombre</option>
+      <option value="avg">Moyenne</option>
+      <option value="min">Min</option>
+      <option value="max">Max</option>
+    </select>
+    <label>Totaux</label>
+    <select id="tot-sel" onchange="buildPivot()">
+      <option value="both">Lig. + Col.</option>
+      <option value="r">Lignes</option>
+      <option value="c">Colonnes</option>
+      <option value="none">Aucun</option>
+    </select>
+    <label>Tri</label>
+    <select id="srt-sel" onchange="buildPivot()">
+      <option value="la">Libellé ↑</option>
+      <option value="ld">Libellé ↓</option>
+      <option value="vd">Valeur ↓</option>
+      <option value="va">Valeur ↑</option>
+    </select>
+    <button class="btn-export" onclick="exportCSV()">↓ Exporter CSV</button>
+  </div>
+
+  <!-- BODY -->
+  <div class="body">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+
+      <!-- ZONES -->
+      <div class="sb-section">
+        <div class="sb-label"><span class="sb-label-dot d-green"></span>Lignes</div>
+        <div class="drop-zone" id="zone-r" data-zone="r" data-ph="Déposer un champ…"></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-label"><span class="sb-label-dot d-blue"></span>Colonnes</div>
+        <div class="drop-zone" id="zone-c" data-zone="c" data-ph="Déposer un champ…"></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-label"><span class="sb-label-dot d-purple"></span>Valeurs</div>
+        <div class="drop-zone" id="zone-v" data-zone="v" data-ph="Champ numérique…"></div>
+      </div>
+      <div class="sb-section">
+        <div class="sb-label"><span class="sb-label-dot d-amber"></span>Filtres</div>
+        <div class="drop-zone" id="zone-f" data-zone="f" data-ph="Déposer un champ…"></div>
+      </div>
+
+      <!-- ACTIVE FILTERS -->
+      <div class="sb-section" id="filter-values-section" style="display:none">
+        <div class="sb-label">Valeurs filtre</div>
+        <div id="filter-values-list"></div>
+      </div>
+
+      <!-- FIELD LIST -->
+      <div class="sb-section" style="padding-bottom:4px">
+        <div class="sb-label" id="fields-label">Champs</div>
+      </div>
+      <div class="field-list" id="field-list"></div>
+
+    </div><!-- /sidebar -->
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="pivot-wrap" id="pivot-out">
+        <div class="loading" id="loading-state">
+          <div class="spinner"></div>
+          <span>Connexion à Grist…</span>
+        </div>
+      </div>
+      <div class="stats-bar" id="stats-bar" style="display:none">
+        <div class="stat-item"><span class="stat-val" id="st-rows">—</span><span class="stat-lbl">lignes</span></div>
+        <div class="stat-item"><span class="stat-val" id="st-cols">—</span><span class="stat-lbl">colonnes</span></div>
+        <div class="stat-item"><span class="stat-val" id="st-cells">—</span><span class="stat-lbl">cellules</span></div>
+        <div class="stat-item"><span class="stat-val" id="st-total">—</span><span class="stat-lbl">total</span></div>
+      </div>
+    </div>
+
+  </div><!-- /body -->
+</div><!-- /app -->
+
+<script>
+// ── STATE ──
+var rawData = [];
+var columns = [];
+var colTypes = {};
+var cfg = { r: [], c: [], v: [], f: [] };
+var filterValues = {};
+var dragField = null;
+var dragSrc = null;
+
+// ── GRIST API ──
+grist.ready({
+  requiredAccess: 'read table',
+  columns: []
+});
+
+grist.onRecords(function(records, mappings) {
+  if (!records || records.length === 0) {
+    showEmpty('La table est vide ou aucune table sélectionnée.');
+    return;
+  }
+
+  // Build data array from Grist records
+  // records is array of objects keyed by field id
+  rawData = records;
+
+  // Extract column names (excluding Grist internal fields starting with 'id')
+  var firstRec = records[0];
+  columns = Object.keys(firstRec).filter(function(k) { return k !== 'id'; });
+
+  inferTypes();
+  updateStatus(records.length);
+  renderFieldList();
+  renderZones();
+  buildPivot();
+});
+
+// Also handle column metadata if available
+grist.onOptions && grist.onOptions(function(options) {
+  if (options && options.cfg) {
+    cfg = options.cfg;
+    renderZones();
+    renderFieldList();
+    buildPivot();
+  }
+});
+
+function updateStatus(count) {
+  document.getElementById('status-dot').classList.add('live');
+  document.getElementById('status-text').textContent =
+    count.toLocaleString('fr') + ' enreg. · ' + columns.length + ' champs';
+}
+
+function showEmpty(msg) {
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('pivot-out').innerHTML =
+    '<div class="empty-state"><div class="empty-icon">⊞</div><p>' + msg + '</p></div>';
+}
+
+// ── TYPE INFERENCE ──
+function inferTypes() {
+  colTypes = {};
+  columns.forEach(function(col) {
+    var sample = rawData.slice(0, 100)
+      .map(function(r) { return r[col]; })
+      .filter(function(v) { return v !== null && v !== undefined && v !== ''; });
+    var numCount = sample.filter(function(v) {
+      return typeof v === 'number' || (!isNaN(parseFloat(v)) && isFinite(v));
+    }).length;
+    var dateCount = sample.filter(function(v) {
+      return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v);
+    }).length;
+    if (sample.length === 0) { colTypes[col] = 's'; return; }
+    if (numCount / sample.length > 0.75) colTypes[col] = 'n';
+    else if (dateCount / sample.length > 0.5) colTypes[col] = 'd';
+    else colTypes[col] = 's';
+    // Coerce numbers
+    if (colTypes[col] === 'n') {
+      rawData.forEach(function(r) {
+        var n = parseFloat(r[col]);
+        r[col] = isNaN(n) ? null : n;
+      });
+    }
+  });
+}
+
+// ── FIELD LIST ──
+function renderFieldList() {
+  var list = document.getElementById('field-list');
+  var usedSet = new Set(cfg.r.concat(cfg.c).concat(cfg.v).concat(cfg.f));
+  var remaining = columns.filter(function(c) { return !usedSet.has(c); }).length;
+  document.getElementById('fields-label').textContent =
+    'Champs (' + remaining + '/' + columns.length + ')';
+  list.innerHTML = '';
+  columns.forEach(function(col) {
+    var t = colTypes[col] || 's';
+    var inUse = usedSet.has(col);
+    var item = document.createElement('div');
+    item.className = 'field-item' + (inUse ? ' used' : '');
+    item.draggable = !inUse;
+    item.dataset.field = col;
+    item.innerHTML =
+      '<span class="field-type ft-' + t + '">' + t + '</span>' +
+      '<span class="field-name" title="' + col + '">' + col + '</span>';
+    if (!inUse) {
+      item.addEventListener('dragstart', function(e) {
+        dragField = col; dragSrc = 'fields';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+    }
+    list.appendChild(item);
+  });
+}
+
+// ── ZONES ──
+function renderZones() {
+  var defs = [
+    { key: 'r', cls: 'chip-r' },
+    { key: 'c', cls: 'chip-c' },
+    { key: 'v', cls: 'chip-v' },
+    { key: 'f', cls: 'chip-f' },
+  ];
+  defs.forEach(function(d) {
+    var zone = document.getElementById('zone-' + d.key);
+    zone.innerHTML = '';
+    cfg[d.key].forEach(function(f) {
+      zone.appendChild(makeChip(f, d.cls, d.key));
+    });
+  });
+  setupZoneListeners();
+  renderFilterSelects();
+}
+
+function makeChip(field, cls, zone) {
+  var chip = document.createElement('div');
+  chip.className = 'chip ' + cls;
+  chip.draggable = true;
+  chip.dataset.field = field;
+  chip.dataset.src = zone;
+  chip.innerHTML = '<span>' + field + '</span><button class="chip-rm" title="Retirer">×</button>';
+  chip.addEventListener('dragstart', function(e) {
+    dragField = field; dragSrc = zone;
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  chip.querySelector('.chip-rm').addEventListener('click', function(e) {
+    e.stopPropagation();
+    cfg[zone] = cfg[zone].filter(function(x) { return x !== field; });
+    if (zone === 'f') delete filterValues[field];
+    renderZones(); renderFieldList(); buildPivot();
+    saveOptions();
+  });
+  return chip;
+}
+
+function setupZoneListeners() {
+  document.querySelectorAll('.drop-zone').forEach(function(zone) {
+    zone.addEventListener('dragover', function(e) {
+      e.preventDefault(); zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', function() {
+      zone.classList.remove('drag-over');
+    });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault(); zone.classList.remove('drag-over');
+      var zn = zone.dataset.zone;
+      if (!dragField) return;
+      // Remove from source zone
+      if (dragSrc && dragSrc !== 'fields') {
+        cfg[dragSrc] = cfg[dragSrc].filter(function(x) { return x !== dragField; });
+        if (dragSrc === 'f') delete filterValues[dragField];
+      }
+      // Add to target zone (avoid dups)
+      if (!cfg[zn].includes(dragField)) {
+        cfg[zn].push(dragField);
+        if (zn === 'f') initFilterValue(dragField);
+      }
+      dragField = null; dragSrc = null;
+      renderZones(); renderFieldList(); buildPivot();
+      saveOptions();
+    });
+  });
+}
+
+function saveOptions() {
+  grist.setOptions && grist.setOptions({ cfg: cfg });
+}
+
+// ── FILTERS ──
+function initFilterValue(field) {
+  var vals = rawData
+    .map(function(r) { return r[field]; })
+    .filter(function(v) { return v !== null && v !== undefined && v !== ''; });
+  vals = [...new Set(vals)].sort(function(a, b) {
+    return String(a).localeCompare(String(b), 'fr', { numeric: true });
+  });
+  filterValues[field] = { opts: vals, sel: '__all__' };
+}
+
+function renderFilterSelects() {
+  var section = document.getElementById('filter-values-section');
+  var list = document.getElementById('filter-values-list');
+  if (!cfg.f.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  list.innerHTML = '';
+  cfg.f.forEach(function(field) {
+    var fv = filterValues[field];
+    if (!fv) return;
+    var row = document.createElement('div');
+    row.className = 'filter-row';
+    var lb = document.createElement('label');
+    lb.textContent = field; lb.title = field;
+    var sel = document.createElement('select');
+    sel.innerHTML = '<option value="__all__">Tout</option>' +
+      fv.opts.map(function(v) {
+        return '<option value="' + v + '"' + (fv.sel === String(v) ? ' selected' : '') + '>' + v + '</option>';
+      }).join('');
+    sel.addEventListener('change', function() {
+      filterValues[field].sel = sel.value; buildPivot();
+    });
+    row.appendChild(lb); row.appendChild(sel);
+    list.appendChild(row);
+  });
+}
+
+function getFilteredData() {
+  return rawData.filter(function(row) {
+    return cfg.f.every(function(field) {
+      var fv = filterValues[field];
+      if (!fv || fv.sel === '__all__') return true;
+      return String(row[field]) === fv.sel;
+    });
+  });
+}
+
+// ── AGGREGATION ──
+function agg(arr, fn) {
+  if (!arr || !arr.length) return null;
+  switch (fn) {
+    case 'sum': return arr.reduce(function(s, v) { return s + v; }, 0);
+    case 'cnt': return arr.length;
+    case 'avg': return arr.reduce(function(s, v) { return s + v; }, 0) / arr.length;
+    case 'min': return Math.min.apply(null, arr);
+    case 'max': return Math.max.apply(null, arr);
+  }
+}
+
+function fmt(v, fn) {
+  if (v === null || v === undefined) return '—';
+  if (fn === 'cnt') return Math.round(v).toLocaleString('fr');
+  if (Number.isInteger(v)) return v.toLocaleString('fr');
+  return parseFloat(v.toFixed(2)).toLocaleString('fr');
+}
+
+// ── PIVOT TABLE ──
+function buildPivot() {
+  var out = document.getElementById('pivot-out');
+  document.getElementById('loading-state') &&
+    (document.getElementById('loading-state').style.display = 'none');
+
+  if (!rawData.length) {
+    out.innerHTML = '<div class="empty-state"><div class="empty-icon">⊞</div>' +
+      '<p>En attente des données Grist…</p></div>';
+    return;
+  }
+
+  if (!cfg.r.length && !cfg.c.length && !cfg.v.length) {
+    out.innerHTML = '<div class="empty-state">' +
+      '<div class="empty-icon">⊕</div>' +
+      '<p>Glissez des champs vers les zones <strong>Lignes</strong>, <strong>Colonnes</strong> et <strong>Valeurs</strong>.</p>' +
+      '</div>';
+    document.getElementById('stats-bar').style.display = 'none';
+    return;
+  }
+
+  var fn  = document.getElementById('agg-sel').value;
+  var tots = document.getElementById('tot-sel').value;
+  var srt  = document.getElementById('srt-sel').value;
+  var data = getFilteredData();
+
+  var rKey = function(row) {
+    return (cfg.r.length ? cfg.r : ['__all__']).map(function(f) {
+      var v = row[f];
+      return v === null || v === undefined ? '(vide)' : String(v);
+    }).join(' › ');
+  };
+  var cKey = function(row) {
+    return cfg.c.length ? cfg.c.map(function(f) {
+      var v = row[f];
+      return v === null || v === undefined ? '(vide)' : String(v);
+    }).join(' › ') : '(valeur)';
+  };
+
+  var rowKeys = [...new Set(data.map(rKey))];
+  var colKeys = cfg.c.length ? [...new Set(data.map(cKey))] : ['(valeur)'];
+
+  // Build cell map
+  var cellMap = {};
+  data.forEach(function(row) {
+    var rk = rKey(row), ck = cKey(row), key = rk + '||' + ck;
+    if (!cellMap[key]) cellMap[key] = [];
+    var val = cfg.v.length ? row[cfg.v[0]] : 1;
+    cellMap[key].push(typeof val === 'number' ? val : (parseFloat(val) || 0));
+  });
+
+  var mat = {};
+  rowKeys.forEach(function(rk) {
+    mat[rk] = {};
+    colKeys.forEach(function(ck) { mat[rk][ck] = agg(cellMap[rk + '||' + ck], fn); });
+  });
+
+  var rowTotal = function(rk) {
+    return colKeys.reduce(function(s, ck) { return s + (mat[rk][ck] || 0); }, 0);
+  };
+
+  // Sort rows
+  var rows = [...rowKeys];
+  if (srt === 'la') rows.sort(function(a, b) { return a.localeCompare(b, 'fr', { numeric: true }); });
+  else if (srt === 'ld') rows.sort(function(a, b) { return b.localeCompare(a, 'fr', { numeric: true }); });
+  else if (srt === 'vd') rows.sort(function(a, b) { return rowTotal(b) - rowTotal(a); });
+  else rows.sort(function(a, b) { return rowTotal(a) - rowTotal(b); });
+
+  // Sort cols
+  var sortedCols = [...colKeys].sort(function(a, b) {
+    return a.localeCompare(b, 'fr', { numeric: true });
+  });
+
+  // Build table
+  var t = document.createElement('table');
+  t.className = 'pvt-table';
+  var thead = t.createTHead(), tbody = t.createTBody(), tfoot = t.createTFoot();
+
+  // Header
+  var hr = thead.insertRow();
+  var rhCount = Math.max(cfg.r.length, 1);
+
+  if (cfg.r.length) {
+    cfg.r.forEach(function(f) {
+      var th = document.createElement('th');
+      th.className = 'row-h';
+      th.textContent = f;
+      th.style.minWidth = '110px';
+      hr.appendChild(th);
+    });
+  } else {
+    var th = document.createElement('th');
+    th.className = 'row-h';
+    th.textContent = cfg.v[0] || '—';
+    hr.appendChild(th);
+  }
+
+  sortedCols.forEach(function(ck) {
+    var th = document.createElement('th');
+    th.className = 'col-h';
+    th.textContent = ck;
+    th.style.minWidth = '90px';
+    hr.appendChild(th);
+  });
+
+  if (tots === 'both' || tots === 'r') {
+    var th = document.createElement('th');
+    th.className = 'col-h grand-total';
+    th.textContent = 'Total';
+    hr.appendChild(th);
+  }
+
+  // Body rows
+  rows.forEach(function(rk) {
+    var tr = tbody.insertRow();
+    if (cfg.r.length) {
+      var parts = rk.split(' › ');
+      cfg.r.forEach(function(f, i) {
+        var td = tr.insertCell(); td.className = 'row-label';
+        td.textContent = parts[i] || '';
+      });
+    } else {
+      var td = tr.insertCell(); td.className = 'row-label'; td.textContent = rk;
+    }
+    var rowSum = 0;
+    sortedCols.forEach(function(ck) {
+      var td = tr.insertCell();
+      var v = mat[rk][ck];
+      if (v === null || v === undefined) {
+        td.className = 'null-val'; td.textContent = '—';
+      } else {
+        td.className = 'val has-val'; td.textContent = fmt(v, fn); rowSum += v;
+      }
+    });
+    if (tots === 'both' || tots === 'r') {
+      var td = tr.insertCell();
+      td.className = 'val grand-total'; td.textContent = fmt(rowSum, fn);
+    }
+  });
+
+  // Footer totals
+  if (tots === 'both' || tots === 'c') {
+    var fr = tfoot.insertRow();
+    var th = document.createElement('th');
+    th.colSpan = rhCount; th.textContent = 'Total'; fr.appendChild(th);
+    var grandTotal = 0;
+    sortedCols.forEach(function(ck) {
+      var colSum = rows.reduce(function(s, rk) { return s + (mat[rk][ck] || 0); }, 0);
+      grandTotal += colSum;
+      var td = fr.insertCell(); td.textContent = fmt(colSum, fn);
+    });
+    if (tots === 'both') {
+      var td = fr.insertCell(); td.className = 'grand-total'; td.textContent = fmt(grandTotal, fn);
+    }
+  }
+
+  out.innerHTML = '';
+  out.appendChild(t);
+
+  // Stats bar
+  var grandT = rows.reduce(function(s, rk) { return s + rowTotal(rk); }, 0);
+  document.getElementById('stats-bar').style.display = 'flex';
+  document.getElementById('st-rows').textContent = rows.length.toLocaleString('fr');
+  document.getElementById('st-cols').textContent = sortedCols.length.toLocaleString('fr');
+  document.getElementById('st-cells').textContent = (rows.length * sortedCols.length).toLocaleString('fr');
+  document.getElementById('st-total').textContent = fmt(grandT, fn);
+}
+
+// ── EXPORT CSV ──
+function exportCSV() {
+  var table = document.querySelector('.pvt-table');
+  if (!table) return;
+  var csv = '';
+  table.querySelectorAll('tr').forEach(function(tr) {
+    csv += Array.from(tr.querySelectorAll('th,td')).map(function(c) {
+      return '"' + c.textContent.replace(/"/g, '""') + '"';
+    }).join(';') + '\n';
+  });
+  var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'tcd_grist.csv';
+  a.click();
+}
+</script>
+</body>
+</html>

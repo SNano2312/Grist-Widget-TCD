@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tableau Croisé Dynamique</title>
 <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -107,7 +108,7 @@
       <option value="la">Libellé ↑</option><option value="ld">Libellé ↓</option>
       <option value="vd">Valeur ↓</option><option value="va">Valeur ↑</option>
     </select>
-    <button class="btn-export" onclick="exportCSV()">↓ CSV</button>
+    <button class="btn-export" onclick="exportXLSX()">↓ XLSX</button>
   </div>
   <div class="body">
     <div class="sidebar">
@@ -307,12 +308,36 @@ function buildPivot(){
   document.getElementById('st-cells').textContent=(rows.length*sCols.length).toLocaleString('fr');
   document.getElementById('st-total').textContent=fmt(gT2,fn);
 }
-function exportCSV(){
-  var table=document.querySelector('.pvt-table');if(!table)return;
-  var csv='';
-  table.querySelectorAll('tr').forEach(function(tr){csv+=Array.from(tr.querySelectorAll('th,td')).map(function(c){return'"'+c.textContent.replace(/"/g,'""')+'"'}).join(';')+'\n'});
-  var b=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tcd_grist.csv';a.click();
+function exportXLSX() {
+  var table = document.querySelector('.pvt-table');
+  if (!table) return;
+
+  // Convertit le tableau HTML → feuille Excel
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.table_to_sheet(table, {
+    raw: true
+  });
+
+  // Ajuste automatiquement la largeur des colonnes
+  var range = XLSX.utils.decode_range(ws['!ref']);
+  var colWidths = [];
+  for (var C = range.s.c; C <= range.e.c; ++C) {
+    var maxWidth = 10;
+    for (var R = range.s.r; R <= range.e.r; ++R) {
+      var cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (!cell) continue;
+      var text = String(cell.v);
+      maxWidth = Math.max(maxWidth, text.length + 2);
+    }
+    colWidths.push({ wch: maxWidth });
+  }
+  ws['!cols'] = colWidths;
+
+  // Ajoute la feuille au classeur
+  XLSX.utils.book_append_sheet(wb, ws, "TCD");
+
+  // Téléchargement
+  XLSX.writeFile(wb, "tcd_grist.xlsx");
 }
 </script>
 </body>

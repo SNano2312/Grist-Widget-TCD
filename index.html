@@ -167,7 +167,17 @@
 <script>
 var rawData=[],columns=[],colTypes={},cfg={r:[],c:[],v:[],f:[]},filterValues={},dragField=null,dragSrc=null;
 var pivotSortCol=null,pivotSortDir='desc';
+var foldEnabled = false;
+document.addEventListener('DOMContentLoaded', function () {
+  var btn = document.getElementById('toggle-fold');
+  if (!btn) return;
 
+  btn.addEventListener('click', function () {
+    foldEnabled = !foldEnabled;
+    btn.classList.toggle('active', foldEnabled);
+    buildPivot();
+  });
+});
 grist.ready({requiredAccess:'read table',columns:[]});
 
 grist.onRecords(function(records){
@@ -453,18 +463,25 @@ function buildPivot(){
       cfg.r.forEach(function(f,i){
         var td=tr.insertCell();
         td.className='row-label';
-        if(i===parts.length-1 && parts.length>1){
-          td.innerHTML='<span class="toggle">▶</span> '+(parts[i]||'');
-          td.classList.add('has-toggle');
-        } else {
-          td.textContent=parts[i]||'';
+        if (foldEnabled && i===parts.length-1 && parts.length>1) {
+    td.innerHTML = '<span class="toggle">▼</span> ' + (parts[i]||'');
+    td.classList.add('has-toggle');
+} else {
+    td.textContent = parts[i]||'';
+}
         }
       });
-    } else {
-      var td=tr.insertCell();
-      td.className='row-label has-toggle';
-      td.innerHTML='<span class="toggle">▶</span> '+rk;
-    }
+   } else {
+  var td = tr.insertCell();
+  td.className = 'row-label';
+
+  if (foldEnabled) {
+    td.innerHTML = '<span class="toggle">▼</span> ' + rk;
+    td.classList.add('has-toggle');
+  } else {
+    td.textContent = rk;
+  }
+}
 
     var rs=0;
 

@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tableau Croisé Dynamique</title>
+
 <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -92,56 +95,86 @@
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text">En attente de Grist…</span>
     <div class="spacer"></div>
+
     <label>Agrégation</label>
     <select id="agg-sel" onchange="buildPivot()">
-      <option value="sum">Somme</option><option value="cnt">Nombre</option>
-      <option value="avg">Moyenne</option><option value="min">Min</option><option value="max">Max</option>
+      <option value="sum">Somme</option>
+      <option value="cnt">Nombre</option>
+      <option value="avg">Moyenne</option>
+      <option value="min">Min</option>
+      <option value="max">Max</option>
     </select>
+
     <label>Totaux</label>
     <select id="tot-sel" onchange="buildPivot()">
-      <option value="both">Lig. + Col.</option><option value="r">Lignes</option>
-      <option value="c">Colonnes</option><option value="none">Aucun</option>
+      <option value="both">Lig. + Col.</option>
+      <option value="r">Lignes</option>
+      <option value="c">Colonnes</option>
+      <option value="none">Aucun</option>
     </select>
+
     <label>Tri</label>
     <select id="srt-sel" onchange="buildPivot()">
-      <option value="la">Libellé ↑</option><option value="ld">Libellé ↓</option>
-      <option value="vd">Valeur ↓</option><option value="va">Valeur ↑</option>
+      <option value="la">Libellé ↑</option>
+      <option value="ld">Libellé ↓</option>
+      <option value="vd">Valeur ↓</option>
+      <option value="va">Valeur ↑</option>
     </select>
-    <button class="btn-export" onclick="exportCSV()">↓ CSV</button>
+
+    <label>Calcul</label>
+    <select id="calc-sel" onchange="buildPivot()">
+      <option value="none">Aucun</option>
+      <option value="pct-total">% du total</option>
+      <option value="pct-row">% ligne</option>
+      <option value="pct-col">% colonne</option>
+      <option value="delta">Δ vs précédent</option>
+      <option value="pct-delta">Δ% vs précédent</option>
+    </select>
+
+    <button class="btn-export" onclick="exportXLSX()">↓ XLSX</button>
   </div>
+
   <div class="body">
     <div class="sidebar">
       <div class="sb-section">
         <div class="sb-label"><span class="sb-label-dot d-green"></span>Lignes</div>
         <div class="drop-zone" id="zone-r" data-zone="r" data-ph="Déposer un champ…"></div>
       </div>
+
       <div class="sb-section">
         <div class="sb-label"><span class="sb-label-dot d-blue"></span>Colonnes</div>
         <div class="drop-zone" id="zone-c" data-zone="c" data-ph="Déposer un champ…"></div>
       </div>
+
       <div class="sb-section">
         <div class="sb-label"><span class="sb-label-dot d-purple"></span>Valeurs</div>
         <div class="drop-zone" id="zone-v" data-zone="v" data-ph="Champ numérique…"></div>
       </div>
+
       <div class="sb-section">
         <div class="sb-label"><span class="sb-label-dot d-amber"></span>Filtres</div>
         <div class="drop-zone" id="zone-f" data-zone="f" data-ph="Déposer un champ…"></div>
       </div>
+
       <div class="sb-section" id="filter-values-section" style="display:none">
         <div class="sb-label">Valeurs filtre</div>
         <div id="filter-values-list"></div>
       </div>
+
       <div class="sb-section" style="padding-bottom:4px">
         <div class="sb-label" id="fields-label">Champs</div>
       </div>
+
       <div class="field-list" id="field-list"></div>
     </div>
+
     <div class="main">
       <div class="pivot-wrap" id="pivot-out">
         <div class="loading" id="loading-state">
           <div class="spinner"></div><span>Connexion à Grist…</span>
         </div>
       </div>
+
       <div class="stats-bar" id="stats-bar" style="display:none">
         <div class="stat-item"><span class="stat-val" id="st-rows">—</span><span class="stat-lbl">lignes</span></div>
         <div class="stat-item"><span class="stat-val" id="st-cols">—</span><span class="stat-lbl">colonnes</span></div>
@@ -151,169 +184,532 @@
     </div>
   </div>
 </div>
+
+<div id="drill-popup" style="
+  display:none;
+  position:fixed;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  background:white;
+  border:1px solid #ccc;
+  padding:20px;
+  max-height:70vh;
+  max-width:70vw;
+  overflow:auto;
+  box-shadow:0 4px 20px rgba(0,0,0,0.2);
+  z-index:9999;
+">
+  <button onclick="closeDrill()" style="float:right;">✖</button>
+  <h3>Détails</h3>
+  <div id="drill-content"></div>
+</div>
 <script>
 var rawData=[],columns=[],colTypes={},cfg={r:[],c:[],v:[],f:[]},filterValues={},dragField=null,dragSrc=null;
+var pivotSortCol=null,pivotSortDir='desc';
+
 grist.ready({requiredAccess:'read table',columns:[]});
+
+/* Réception des données */
 grist.onRecords(function(records){
   if(!records||!records.length){showEmpty('Table vide.');return}
   rawData=records;
   var first=records[0];
-  columns=Object.keys(first).filter(function(k){return k!=='id'});
+  columns=Object.keys(first).filter(k=>k!=='id');
   inferTypes();
   document.getElementById('status-dot').classList.add('live');
-  document.getElementById('status-text').textContent=records.length.toLocaleString('fr')+' enreg. · '+columns.length+' champs';
-  renderFieldList();renderZones();buildPivot();
+  document.getElementById('status-text').textContent=
+    records.length.toLocaleString('fr')+' enreg. · '+columns.length+' champs';
+  renderFieldList();
+  renderZones();
+  buildPivot();
 });
-grist.onOptions&&grist.onOptions(function(o){if(o&&o.cfg){cfg=o.cfg;renderZones();renderFieldList();buildPivot()}});
-function showEmpty(m){document.getElementById('pivot-out').innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>'+m+'</p></div>'}
+
+/* Options sauvegardées */
+grist.onOptions && grist.onOptions(function(o){
+  if(o && o.cfg){
+    cfg=o.cfg;
+    renderZones();
+    renderFieldList();
+    buildPivot();
+  }
+});
+
+/* Affichage vide */
+function showEmpty(msg){
+  document.getElementById('pivot-out').innerHTML=
+    '<div class="empty-state"><div class="empty-icon">⊞</div><p>'+msg+'</p></div>';
+}
+
+/* Détection des types */
 function inferTypes(){
   colTypes={};
   columns.forEach(function(col){
-    var s=rawData.slice(0,100).map(function(r){return r[col]}).filter(function(v){return v!==null&&v!==undefined&&v!==''});
-    var n=s.filter(function(v){return typeof v==='number'||(!isNaN(parseFloat(v))&&isFinite(v))}).length;
-    var d=s.filter(function(v){return typeof v==='string'&&/^\d{4}-\d{2}-\d{2}/.test(v)}).length;
-    if(!s.length){colTypes[col]='s';return}
-    if(n/s.length>0.75)colTypes[col]='n';
-    else if(d/s.length>0.5)colTypes[col]='d';
+    var sample=rawData.slice(0,100)
+      .map(r=>r[col])
+      .filter(v=>v!==null&&v!==undefined&&v!=='');
+    if(!sample.length){colTypes[col]='s';return}
+
+    var nums=sample.filter(v=>typeof v==='number' || (!isNaN(parseFloat(v))&&isFinite(v))).length;
+    var dates=sample.filter(v=>typeof v==='string' && /^\d{4}-\d{2}-\d{2}/.test(v)).length;
+
+    if(nums/sample.length>0.75) colTypes[col]='n';
+    else if(dates/sample.length>0.5) colTypes[col]='d';
     else colTypes[col]='s';
-    if(colTypes[col]==='n')rawData.forEach(function(r){var n=parseFloat(r[col]);r[col]=isNaN(n)?null:n});
+
+    if(colTypes[col]==='n'){
+      rawData.forEach(r=>{
+        var n=parseFloat(r[col]);
+        r[col]=isNaN(n)?null:n;
+      });
+    }
   });
 }
+
+/* Drill-down */
+function openDrill(rows){
+  document.getElementById('drill-content').innerHTML=
+    '<pre>'+JSON.stringify(rows,null,2)+'</pre>';
+  document.getElementById('drill-popup').style.display='block';
+}
+function closeDrill(){
+  document.getElementById('drill-popup').style.display='none';
+}
+
+/* Calculs dérivés */
+function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal){
+  if(v===null||v===undefined) return null;
+  switch(type){
+    case 'pct-total': return grandTotal ? v/grandTotal : null;
+    case 'pct-row':   return rowTotal ? v/rowTotal : null;
+    case 'pct-col':   return colTotal ? v/colTotal : null;
+    case 'delta':     return prevVal!=null ? v-prevVal : null;
+    case 'pct-delta': return prevVal ? (v-prevVal)/prevVal : null;
+    default:          return v;
+  }
+}
+
+/* Liste des champs */
 function renderFieldList(){
   var list=document.getElementById('field-list');
-  var used=new Set(cfg.r.concat(cfg.c).concat(cfg.v).concat(cfg.f));
-  document.getElementById('fields-label').textContent='Champs ('+columns.filter(function(c){return!used.has(c)}).length+'/'+columns.length+')';
+  var used=new Set([...cfg.r,...cfg.c,...cfg.v,...cfg.f]);
+  document.getElementById('fields-label').textContent=
+    'Champs ('+columns.filter(c=>!used.has(c)).length+'/'+columns.length+')';
+
   list.innerHTML='';
   columns.forEach(function(col){
-    var t=colTypes[col]||'s',inUse=used.has(col);
+    var t=colTypes[col]||'s';
+    var inUse=used.has(col);
     var item=document.createElement('div');
-    item.className='field-item'+(inUse?' used':'');item.draggable=!inUse;item.dataset.field=col;
-    item.innerHTML='<span class="field-type ft-'+t+'">'+t+'</span><span class="field-name" title="'+col+'">'+col+'</span>';
-    if(!inUse)item.addEventListener('dragstart',function(e){dragField=col;dragSrc='fields';e.dataTransfer.effectAllowed='move'});
+    item.className='field-item'+(inUse?' used':'');
+    item.draggable=!inUse;
+    item.dataset.field=col;
+    item.innerHTML=
+      '<span class="field-type ft-'+t+'">'+t+'</span>'+
+      '<span class="field-name" title="'+col+'">'+col+'</span>';
+
+    if(!inUse){
+      item.addEventListener('dragstart',function(e){
+        dragField=col;
+        dragSrc='fields';
+        e.dataTransfer.effectAllowed='move';
+      });
+    }
     list.appendChild(item);
   });
 }
+
+/* Zones */
 function renderZones(){
-  [{key:'r',cls:'chip-r'},{key:'c',cls:'chip-c'},{key:'v',cls:'chip-v'},{key:'f',cls:'chip-f'}].forEach(function(d){
-    var zone=document.getElementById('zone-'+d.key);zone.innerHTML='';
-    cfg[d.key].forEach(function(f){zone.appendChild(makeChip(f,d.cls,d.key))});
+  [
+    {key:'r',cls:'chip-r'},
+    {key:'c',cls:'chip-c'},
+    {key:'v',cls:'chip-v'},
+    {key:'f',cls:'chip-f'}
+  ].forEach(function(d){
+    var zone=document.getElementById('zone-'+d.key);
+    zone.innerHTML='';
+    cfg[d.key].forEach(f=>zone.appendChild(makeChip(f,d.cls,d.key)));
   });
-  setupZones();renderFilterSelects();
+  setupZones();
+  renderFilterSelects();
 }
+
 function makeChip(field,cls,zone){
-  var chip=document.createElement('div');chip.className='chip '+cls;chip.draggable=true;chip.dataset.field=field;chip.dataset.src=zone;
+  var chip=document.createElement('div');
+  chip.className='chip '+cls;
+  chip.draggable=true;
+  chip.dataset.field=field;
+  chip.dataset.src=zone;
   chip.innerHTML='<span>'+field+'</span><button class="chip-rm">×</button>';
-  chip.addEventListener('dragstart',function(e){dragField=field;dragSrc=zone;e.dataTransfer.effectAllowed='move'});
-  chip.querySelector('.chip-rm').addEventListener('click',function(e){
-    e.stopPropagation();cfg[zone]=cfg[zone].filter(function(x){return x!==field});
-    if(zone==='f')delete filterValues[field];
-    renderZones();renderFieldList();buildPivot();saveOpts();
+
+  chip.addEventListener('dragstart',function(e){
+    dragField=field;
+    dragSrc=zone;
+    e.dataTransfer.effectAllowed='move';
   });
+
+  chip.querySelector('.chip-rm').addEventListener('click',function(e){
+    e.stopPropagation();
+    cfg[zone]=cfg[zone].filter(x=>x!==field);
+    if(zone==='f') delete filterValues[field];
+    renderZones();
+    renderFieldList();
+    buildPivot();
+    saveOpts();
+  });
+
   return chip;
 }
+
 function setupZones(){
   document.querySelectorAll('.drop-zone').forEach(function(z){
-    z.addEventListener('dragover',function(e){e.preventDefault();z.classList.add('drag-over')});
-    z.addEventListener('dragleave',function(){z.classList.remove('drag-over')});
+    z.addEventListener('dragover',function(e){
+      e.preventDefault();
+      z.classList.add('drag-over');
+    });
+    z.addEventListener('dragleave',()=>z.classList.remove('drag-over'));
     z.addEventListener('drop',function(e){
-      e.preventDefault();z.classList.remove('drag-over');
-      var zn=z.dataset.zone;if(!dragField)return;
-      if(dragSrc&&dragSrc!=='fields'){cfg[dragSrc]=cfg[dragSrc].filter(function(x){return x!==dragField});if(dragSrc==='f')delete filterValues[dragField]}
-      if(!cfg[zn].includes(dragField)){cfg[zn].push(dragField);if(zn==='f')initFV(dragField)}
-      dragField=null;dragSrc=null;renderZones();renderFieldList();buildPivot();saveOpts();
+      e.preventDefault();
+      z.classList.remove('drag-over');
+      var zn=z.dataset.zone;
+      if(!dragField) return;
+
+      if(dragSrc && dragSrc!=='fields'){
+        cfg[dragSrc]=cfg[dragSrc].filter(x=>x!==dragField);
+        if(dragSrc==='f') delete filterValues[dragField];
+      }
+
+      if(!cfg[zn].includes(dragField)){
+        cfg[zn].push(dragField);
+        if(zn==='f') initFV(dragField);
+      }
+
+      dragField=null;
+      dragSrc=null;
+      renderZones();
+      renderFieldList();
+      buildPivot();
+      saveOpts();
     });
   });
 }
-function saveOpts(){grist.setOptions&&grist.setOptions({cfg:cfg})}
+
+function saveOpts(){
+  grist.setOptions && grist.setOptions({cfg:cfg});
+}
+
+/* Filtres */
 function initFV(field){
-  var vals=[...new Set(rawData.map(function(r){return r[field]}).filter(function(v){return v!==null&&v!==undefined&&v!==''}))].sort(function(a,b){return String(a).localeCompare(String(b),'fr',{numeric:true})});
+  var vals=[...new Set(
+    rawData.map(r=>r[field]).filter(v=>v!==null&&v!==undefined&&v!=='')
+  )].sort((a,b)=>String(a).localeCompare(String(b),'fr',{numeric:true}));
+
   filterValues[field]={opts:vals,sel:'__all__'};
 }
+
 function renderFilterSelects(){
-  var sec=document.getElementById('filter-values-section'),list=document.getElementById('filter-values-list');
-  if(!cfg.f.length){sec.style.display='none';return}
-  sec.style.display='';list.innerHTML='';
+  var sec=document.getElementById('filter-values-section');
+  var list=document.getElementById('filter-values-list');
+
+  if(!cfg.f.length){
+    sec.style.display='none';
+    return;
+  }
+
+  sec.style.display='';
+  list.innerHTML='';
+
   cfg.f.forEach(function(field){
-    var fv=filterValues[field];if(!fv)return;
-    var row=document.createElement('div');row.className='filter-row';
-    var lb=document.createElement('label');lb.textContent=field;lb.title=field;
+    var fv=filterValues[field];
+    if(!fv) return;
+
+    var row=document.createElement('div');
+    row.className='filter-row';
+
+    var lb=document.createElement('label');
+    lb.textContent=field;
+
     var sel=document.createElement('select');
-    sel.innerHTML='<option value="__all__">Tout</option>'+fv.opts.map(function(v){return'<option value="'+v+'"'+(fv.sel===String(v)?' selected':'')+'>'+v+'</option>'}).join('');
-    sel.addEventListener('change',function(){filterValues[field].sel=sel.value;buildPivot()});
-    row.appendChild(lb);row.appendChild(sel);list.appendChild(row);
+    sel.innerHTML='<option value="__all__">Tout</option>'+
+      fv.opts.map(v=>'<option value="'+v+'"'+(fv.sel===String(v)?' selected':'')+'>'+v+'</option>').join('');
+
+    sel.addEventListener('change',function(){
+      filterValues[field].sel=sel.value;
+      buildPivot();
+    });
+
+    row.appendChild(lb);
+    row.appendChild(sel);
+    list.appendChild(row);
   });
 }
-function filtered(){return rawData.filter(function(row){return cfg.f.every(function(field){var fv=filterValues[field];if(!fv||fv.sel==='__all__')return true;return String(row[field])===fv.sel})})}
-function aggFn(arr,fn){
-  if(!arr||!arr.length)return null;
-  if(fn==='sum')return arr.reduce(function(s,v){return s+v},0);
-  if(fn==='cnt')return arr.length;
-  if(fn==='avg')return arr.reduce(function(s,v){return s+v},0)/arr.length;
-  if(fn==='min')return Math.min.apply(null,arr);
-  if(fn==='max')return Math.max.apply(null,arr);
+
+function filtered(){
+  return rawData.filter(function(row){
+    return cfg.f.every(function(field){
+      var fv=filterValues[field];
+      if(!fv || fv.sel==='__all__') return true;
+      return String(row[field])===fv.sel;
+    });
+  });
 }
+
+/* Agrégations */
+function aggFn(arr,fn){
+  if(!arr||!arr.length) return null;
+  if(fn==='sum') return arr.reduce((s,v)=>s+v,0);
+  if(fn==='cnt') return arr.length;
+  if(fn==='avg') return arr.reduce((s,v)=>s+v,0)/arr.length;
+  if(fn==='min') return Math.min(...arr);
+  if(fn==='max') return Math.max(...arr);
+}
+
 function fmt(v,fn){
-  if(v===null||v===undefined)return'—';
-  if(fn==='cnt')return Math.round(v).toLocaleString('fr');
-  if(Number.isInteger(v))return v.toLocaleString('fr');
+  if(v===null||v===undefined) return '—';
+  if(fn==='cnt') return Math.round(v).toLocaleString('fr');
+  if(Number.isInteger(v)) return v.toLocaleString('fr');
   return parseFloat(v.toFixed(2)).toLocaleString('fr');
 }
+
+/* Construction du TCD */
 function buildPivot(){
   var out=document.getElementById('pivot-out');
-  if(!rawData.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>En attente des données Grist…</p></div>';return}
-  if(!cfg.r.length&&!cfg.c.length&&!cfg.v.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊕</div><p>Glissez des champs vers <strong>Lignes</strong>, <strong>Colonnes</strong> et <strong>Valeurs</strong>.</p></div>';document.getElementById('stats-bar').style.display='none';return}
-  var fn=document.getElementById('agg-sel').value,tots=document.getElementById('tot-sel').value,srt=document.getElementById('srt-sel').value;
+
+  if(!rawData.length){
+    showEmpty('En attente des données Grist…');
+    return;
+  }
+
+  if(!cfg.r.length && !cfg.c.length && !cfg.v.length){
+    showEmpty('Glissez des champs vers Lignes, Colonnes et Valeurs.');
+    document.getElementById('stats-bar').style.display='none';
+    return;
+  }
+
+  var fn=document.getElementById('agg-sel').value;
+  var tots=document.getElementById('tot-sel').value;
+  var srt=document.getElementById('srt-sel').value;
+  var calc=document.getElementById('calc-sel').value;
+
   var data=filtered();
-  var rKey=function(row){return(cfg.r.length?cfg.r:['__all__']).map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › ')};
-  var cKey=function(row){return cfg.c.length?cfg.c.map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › '):'(valeur)'};
-  var rowKeys=[...new Set(data.map(rKey))],colKeys=cfg.c.length?[...new Set(data.map(cKey))]:['(valeur)'];
+
+  var rKey=row=> (cfg.r.length?cfg.r:['__all__'])
+    .map(f=>row[f]==null?'(vide)':String(row[f])).join(' › ');
+
+  var cKey=row=> cfg.c.length
+    ? cfg.c.map(f=>row[f]==null?'(vide)':String(row[f])).join(' › ')
+    : '(valeur)';
+
+  var rowKeys=[...new Set(data.map(rKey))];
+  var colKeys=cfg.c.length?[...new Set(data.map(cKey))]:['(valeur)'];
+
   var cm={};
-  data.forEach(function(row){var r=rKey(row),c=cKey(row),k=r+'||'+c;if(!cm[k])cm[k]=[];var val=cfg.v.length?row[cfg.v[0]]:1;cm[k].push(typeof val==='number'?val:(parseFloat(val)||0))});
+  data.forEach(function(row){
+    var r=rKey(row), c=cKey(row), k=r+'||'+c;
+    if(!cm[k]) cm[k]=[];
+    var val=cfg.v.length?row[cfg.v[0]]:1;
+    cm[k].push(typeof val==='number'?val:(parseFloat(val)||0));
+  });
+
   var mat={};
-  rowKeys.forEach(function(r){mat[r]={};colKeys.forEach(function(c){mat[r][c]=aggFn(cm[r+'||'+c],fn)})});
-  var rTot=function(r){return colKeys.reduce(function(s,c){return s+(mat[r][c]||0)},0)};
+  rowKeys.forEach(r=>{
+    mat[r]={};
+    colKeys.forEach(c=>{
+      mat[r][c]=aggFn(cm[r+'||'+c],fn);
+    });
+  });
+
+  var rTot=r=> colKeys.reduce((s,c)=>s+(mat[r][c]||0),0);
+
   var rows=[...rowKeys];
-  if(srt==='la')rows.sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
-  else if(srt==='ld')rows.sort(function(a,b){return b.localeCompare(a,'fr',{numeric:true})});
-  else if(srt==='vd')rows.sort(function(a,b){return rTot(b)-rTot(a)});
-  else rows.sort(function(a,b){return rTot(a)-rTot(b)});
-  var sCols=[...colKeys].sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
-  var t=document.createElement('table');t.className='pvt-table';
-  var thead=t.createTHead(),tbody=t.createTBody(),tfoot=t.createTFoot();
-  var hr=thead.insertRow(),rhC=Math.max(cfg.r.length,1);
-  if(cfg.r.length){cfg.r.forEach(function(f){var th=document.createElement('th');th.className='row-h';th.textContent=f;th.style.minWidth='110px';hr.appendChild(th)})}
-  else{var th=document.createElement('th');th.className='row-h';th.textContent=cfg.v[0]||'—';hr.appendChild(th)}
-  sCols.forEach(function(c){var th=document.createElement('th');th.className='col-h';th.textContent=c;th.style.minWidth='90px';hr.appendChild(th)});
-  if(tots==='both'||tots==='r'){var th=document.createElement('th');th.className='col-h grand-total';th.textContent='Total';hr.appendChild(th)}
+
+  if(pivotSortCol){
+    rows.sort(function(a,b){
+      var va=mat[a][pivotSortCol]||0;
+      var vb=mat[b][pivotSortCol]||0;
+      return pivotSortDir==='desc' ? (vb-va) : (va-vb);
+    });
+  } else {
+    if(srt==='la') rows.sort((a,b)=>a.localeCompare(b,'fr',{numeric:true}));
+    else if(srt==='ld') rows.sort((a,b)=>b.localeCompare(a,'fr',{numeric:true}));
+    else if(srt==='vd') rows.sort((a,b)=>rTot(b)-rTot(a));
+    else rows.sort((a,b)=>rTot(a)-rTot(b));
+  }
+
+  var sCols=[...colKeys].sort((a,b)=>a.localeCompare(b,'fr',{numeric:true}));
+
+  var gT2=rows.reduce((s,r)=>s+rTot(r),0);
+
+  function cTot(c){
+    return rows.reduce((sum,r)=>sum+(mat[r][c]||0),0);
+  }
+
+  var t=document.createElement('table');
+  t.className='pvt-table';
+  var thead=t.createTHead(), tbody=t.createTBody(), tfoot=t.createTFoot();
+
+  /* En-têtes */
+  var hr=thead.insertRow();
+
+  if(cfg.r.length){
+    cfg.r.forEach(function(f){
+      var th=document.createElement('th');
+      th.className='row-h';
+      th.textContent=f;
+      th.style.minWidth='110px';
+      hr.appendChild(th);
+    });
+  } else {
+    var th=document.createElement('th');
+    th.className='row-h';
+    th.textContent=cfg.v[0]||'—';
+    hr.appendChild(th);
+  }
+
+  sCols.forEach(function(c){
+    var th=document.createElement('th');
+    th.className='col-h';
+    th.textContent=c;
+    th.dataset.col=c;
+    th.style.minWidth='90px';
+    th.style.cursor='pointer';
+    hr.appendChild(th);
+  });
+
+  if(tots==='both'||tots==='r'){
+    var th=document.createElement('th');
+    th.className='col-h grand-total';
+    th.textContent='Total';
+    hr.appendChild(th);
+  }
+
+  /* Lignes */
   rows.forEach(function(rk){
     var tr=tbody.insertRow();
-    if(cfg.r.length){var parts=rk.split(' › ');cfg.r.forEach(function(f,i){var td=tr.insertCell();td.className='row-label';td.textContent=parts[i]||''})}
-    else{var td=tr.insertCell();td.className='row-label';td.textContent=rk}
+    tr.dataset.key=rk;
+
+    if(cfg.r.length){
+      var parts=rk.split(' › ');
+      cfg.r.forEach(function(f,i){
+        var td=tr.insertCell();
+        td.className='row-label';
+        td.textContent=parts[i]||'';
+      });
+    } else {
+      var td=tr.insertCell();
+      td.className='row-label';
+      td.textContent=rk;
+    }
+
     var rs=0;
-    sCols.forEach(function(c){var td=tr.insertCell(),v=mat[rk][c];if(v===null||v===undefined){td.className='null-val';td.textContent='—'}else{td.className='val has-val';td.textContent=fmt(v,fn);rs+=v}});
-    if(tots==='both'||tots==='r'){var td=tr.insertCell();td.className='val grand-total';td.textContent=fmt(rs,fn)}
+
+    sCols.forEach(function(c){
+      var td=tr.insertCell();
+      var v=mat[rk][c];
+
+      td.addEventListener('dblclick',function(){
+        var rowsRaw=rawData.filter(row=>rKey(row)===rk && cKey(row)===c);
+        openDrill(rowsRaw);
+      });
+
+      var prevVal=null;
+      if(calc==='delta'||calc==='pct-delta'){
+        var idx=sCols.indexOf(c);
+        if(idx>0){
+          var prevC=sCols[idx-1];
+          prevVal=mat[rk][prevC];
+        }
+      }
+
+      var derived=derivedValue(calc,v,rTot(rk),cTot(c),prevVal,gT2);
+
+      if(derived==null){
+        td.className='null-val';
+        td.textContent='—';
+      } else {
+        td.className='val has-val';
+        td.textContent=fmt(derived,fn);
+        rs+= (typeof derived==='number'?derived:0);
+      }
+    });
+
+    if(tots==='both'||tots==='r'){
+      var td=tr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(rs,fn);
+    }
   });
+
+  /* Totaux colonnes */
   if(tots==='both'||tots==='c'){
-    var fr=tfoot.insertRow(),th=document.createElement('th');th.colSpan=rhC;th.textContent='Total';fr.appendChild(th);
-    var gT=0;
-    sCols.forEach(function(c){var s=rows.reduce(function(sum,r){return sum+(mat[r][c]||0)},0);gT+=s;var td=fr.insertCell();td.textContent=fmt(s,fn)});
-    if(tots==='both'){var td=fr.insertCell();td.className='grand-total';td.textContent=fmt(gT,fn)}
+    var fr=tfoot.insertRow();
+    var th=document.createElement('th');
+    th.className='row-h grand-total';
+    th.textContent='Total';
+    fr.appendChild(th);
+
+    sCols.forEach(function(c){
+      var td=fr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(cTot(c),fn);
+    });
+
+    if(tots==='both'){
+      var td=fr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(gT2,fn);
+    }
   }
-  out.innerHTML='';out.appendChild(t);
-  var gT2=rows.reduce(function(s,r){return s+rTot(r)},0);
+
+  out.innerHTML='';
+  out.appendChild(t);
+
+  /* Tri colonne */
+  thead.querySelectorAll('th.col-h').forEach(function(th){
+    th.addEventListener('click',function(){
+      var col=th.dataset.col;
+      if(pivotSortCol===col){
+        pivotSortDir=pivotSortDir==='desc'?'asc':'desc';
+      } else {
+        pivotSortCol=col;
+        pivotSortDir='desc';
+      }
+      buildPivot();
+    });
+  });
+
+  /* Stats */
   document.getElementById('stats-bar').style.display='flex';
   document.getElementById('st-rows').textContent=rows.length.toLocaleString('fr');
   document.getElementById('st-cols').textContent=sCols.length.toLocaleString('fr');
   document.getElementById('st-cells').textContent=(rows.length*sCols.length).toLocaleString('fr');
   document.getElementById('st-total').textContent=fmt(gT2,fn);
 }
-function exportCSV(){
-  var table=document.querySelector('.pvt-table');if(!table)return;
-  var csv='';
-  table.querySelectorAll('tr').forEach(function(tr){csv+=Array.from(tr.querySelectorAll('th,td')).map(function(c){return'"'+c.textContent.replace(/"/g,'""')+'"'}).join(';')+'\n'});
-  var b=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='tcd_grist.csv';a.click();
+
+/* Export XLSX */
+function exportXLSX(){
+  var table=document.querySelector('.pvt-table');
+  if(!table) return;
+
+  var wb=XLSX.utils.book_new();
+  var ws=XLSX.utils.table_to_sheet(table,{raw:true});
+
+  var range=XLSX.utils.decode_range(ws['!ref']);
+  var colWidths=[];
+
+  for(var C=range.s.c;C<=range.e.c;++C){
+    var maxWidth=10;
+    for(var R=range.s.r;R<=range.e.r;++R){
+      var cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(!cell) continue;
+      var text=String(cell.v);
+      maxWidth=Math.max(maxWidth,text.length+2);
+    }
+    colWidths.push({wch:maxWidth});
+  }
+
+  ws['!cols']=colWidths;
+  XLSX.utils.book_append_sheet(wb,ws,"TCD");
+  XLSX.writeFile(wb,"tcd_grist.xlsx");
 }
 </script>
-</body>
-</html>

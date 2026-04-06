@@ -108,6 +108,9 @@
       <option value="la">Libellé ↑</option><option value="ld">Libellé ↓</option>
       <option value="vd">Valeur ↓</option><option value="va">Valeur ↑</option>
     </select>
+	<button id="toggle-fold" class="btn-export" title="Activer / désactiver le repli">
+📂
+</button>
 	<label>Calcul</label>
 <select id="calc-sel" onchange="buildPivot()">
   <option value="none">Aucun</option>
@@ -163,6 +166,7 @@
 </div>
 <script>
 var rawData=[],columns=[],colTypes={},cfg={r:[],c:[],v:[],f:[]},filterValues={},dragField=null,dragSrc=null;
+var pivotSortCol=null,pivotSortDir='desc';
 
 grist.ready({requiredAccess:'read table',columns:[]});
 
@@ -199,9 +203,7 @@ function inferTypes(){
   });
 }
 
-/* -----------------------------
-   DRILL-DOWN
-------------------------------*/
+/* DRILL-DOWN */
 function openDrill(rows){
   var div=document.getElementById('drill-content');
   div.innerHTML='<pre>'+JSON.stringify(rows,null,2)+'</pre>';
@@ -211,12 +213,9 @@ function closeDrill(){
   document.getElementById('drill-popup').style.display='none';
 }
 
-/* -----------------------------
-   CALCULS DERIVÉS
-------------------------------*/
+/* CALCULS DERIVÉS */
 function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal){
   if(v===null||v===undefined) return null;
-
   switch(type){
     case 'pct-total': return grandTotal ? v/grandTotal : null;
     case 'pct-row':   return rowTotal ? v/rowTotal : null;
@@ -227,9 +226,7 @@ function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal){
   }
 }
 
-/* -----------------------------
-   UI / DRAG / FILTERS
-------------------------------*/
+/* UI / DRAG / FILTERS */
 function renderFieldList(){
   var list=document.getElementById('field-list');
   var used=new Set(cfg.r.concat(cfg.c).concat(cfg.v).concat(cfg.f));
@@ -311,9 +308,7 @@ function filtered(){
   });
 }
 
-/* -----------------------------
-   AGGREGATION + FORMAT
-------------------------------*/
+/* AGGREGATION + FORMAT */
 function aggFn(arr,fn){
   if(!arr||!arr.length)return null;
   if(fn==='sum')return arr.reduce(function(s,v){return s+v},0);
@@ -330,9 +325,7 @@ function fmt(v,fn){
   return parseFloat(v.toFixed(2)).toLocaleString('fr');
 }
 
-/* -----------------------------
-   BUILD PIVOT (VERSION PROPRE)
-------------------------------*/
+/* BUILD PIVOT AVEC A + B */
 function buildPivot(){
   var out=document.getElementById('pivot-out');
 
@@ -395,10 +388,16 @@ function buildPivot(){
 
   var rows=[...rowKeys];
 
-  if(srt==='la')rows.sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
-  else if(srt==='ld')rows.sort(function(a,b){return b.localeCompare(a,'fr',{numeric:true})});
-  else if(srt==='vd')rows.sort(function(a,b){return rTot(b)-rTot(a)});
-  else rows.sort(function(a,b){return rTot(a)-rTot(b)});
+  if(pivotSortCol){
+    rows.sort(function(a,b){
+      return (mat[b][pivotSortCol]||0)-(mat[a][pivotSortCol]||0);
+    });
+  }else{
+    if(srt==='la')rows.sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
+    else if(srt==='ld')rows.sort(function(a,b){return b.localeCompare(a,'fr',{numeric:true})});
+    else if(srt==='vd')rows.sort(function(a,b){return rTot(b)-rTot(a)});
+    else rows.sort(function(a,b){return rTot(a)-rTot(b)});
+  }
 
   var sCols=[...colKeys].sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
 
@@ -432,6 +431,7 @@ function buildPivot(){
     var th=document.createElement('th');
     th.className='col-h';
     th.textContent=c;
+    th.dataset.col=c;
     th.style.minWidth='90px';
     hr.appendChild(th);
   });
@@ -445,18 +445,25 @@ function buildPivot(){
 
   rows.forEach(function(rk){
     var tr=tbody.insertRow();
+    tr.dataset.key=rk;
+    tr.dataset.level=rk.split(' › ').length-1;
 
     if(cfg.r.length){
       var parts=rk.split(' › ');
       cfg.r.forEach(function(f,i){
         var td=tr.insertCell();
         td.className='row-label';
-        td.textContent=parts[i]||'';
+        if(i===parts.length-1 && parts.length>1){
+          td.innerHTML='<span class="toggle">▶</span> '+(parts[i]||'');
+          td.classList.add('has-toggle');
+        } else {
+          td.textContent=parts[i]||'';
+        }
       });
     } else {
       var td=tr.insertCell();
-      td.className='row-label';
-      td.textContent=rk;
+      td.className='row-label has-toggle';
+      td.innerHTML='<span class="toggle">▶</span> '+rk;
     }
 
     var rs=0;
@@ -523,6 +530,42 @@ function buildPivot(){
   out.innerHTML='';
   out.appendChild(t);
 
+  /* A. REPLI / DÉPLI */
+  tbody.querySelectorAll('.has-toggle .toggle').forEach(function(tg){
+    tg.addEventListener('click',function(){
+      var tr=tg.closest('tr');
+      var level=parseInt(tr.dataset.level,10);
+      var open=tg.textContent==='▼';
+      tg.textContent=open?'▶':'▼';
+      var hide=!open;
+      var next=tr.nextElementSibling;
+      while(next && parseInt(next.dataset.level,10)>level){
+        next.style.display=hide?'none':'';
+        next=next.nextElementSibling;
+      }
+    });
+  });
+
+  /* B. TRI PAR COLONNE */
+  thead.querySelectorAll('th.col-h').forEach(function(th){
+    th.addEventListener('click',function(){
+      var col=th.dataset.col;
+      if(pivotSortCol===col){
+        pivotSortDir=pivotSortDir==='desc'?'asc':'desc';
+      }else{
+        pivotSortCol=col;
+        pivotSortDir='desc';
+      }
+      rows.sort(function(a,b){
+        var va=mat[a][col]||0;
+        var vb=mat[b][col]||0;
+        return pivotSortDir==='desc' ? (vb-va) : (va-vb);
+      });
+      // on relance avec ce critère global
+      buildPivot();
+    });
+  });
+
   document.getElementById('stats-bar').style.display='flex';
   document.getElementById('st-rows').textContent=rows.length.toLocaleString('fr');
   document.getElementById('st-cols').textContent=sCols.length.toLocaleString('fr');
@@ -530,9 +573,7 @@ function buildPivot(){
   document.getElementById('st-total').textContent=fmt(gT2,fn);
 }
 
-/* -----------------------------
-   EXPORT XLSX
-------------------------------*/
+/* EXPORT XLSX */
 function exportXLSX(){
   var table=document.querySelector('.pvt-table');
   if(!table)return;

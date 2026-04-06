@@ -108,6 +108,15 @@
       <option value="la">Libellé ↑</option><option value="ld">Libellé ↓</option>
       <option value="vd">Valeur ↓</option><option value="va">Valeur ↑</option>
     </select>
+	<label>Calcul</label>
+<select id="calc-sel" onchange="buildPivot()">
+  <option value="none">Aucun</option>
+  <option value="pct-total">% du total</option>
+  <option value="pct-row">% ligne</option>
+  <option value="pct-col">% colonne</option>
+  <option value="delta">Δ vs précédent</option>
+  <option value="pct-delta">Δ% vs précédent</option>
+</select>
     <button class="btn-export" onclick="exportXLSX()">↓ XLSX</button>
   </div>
   <div class="body">
@@ -259,11 +268,46 @@ function fmt(v,fn){
   if(Number.isInteger(v))return v.toLocaleString('fr');
   return parseFloat(v.toFixed(2)).toLocaleString('fr');
 }
+function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal) {
+  if (v === null || v === undefined) return null;
+
+  switch(type) {
+    case 'pct-total':
+      return grandTotal ? v / grandTotal : null;
+    case 'pct-row':
+      return rowTotal ? v / rowTotal : null;
+    case 'pct-col':
+      return colTotal ? v / colTotal : null;
+    case 'delta':
+      return (prevVal !== null && prevVal !== undefined) ? v - prevVal : null;
+    case 'pct-delta':
+      return prevVal ? (v - prevVal) / prevVal : null;
+    default:
+      return v;
+  }
+}
+function cTot(c) {
+  var f0 = cfg.v[0];
+  return rows.reduce(function(sum, r){
+    var v = mat[r][c] && mat[r][c][f0];
+    return sum + (v || 0);
+  }, 0);
+}
+function openDrill(rows) {
+    var div = document.getElementById('drill-content');
+    div.innerHTML = '<pre>' + JSON.stringify(rows, null, 2) + '</pre>';
+    document.getElementById('drill-popup').style.display = 'block';
+}
+
+function closeDrill() {
+    document.getElementById('drill-popup').style.display = 'none';
+}
 function buildPivot(){
   var out=document.getElementById('pivot-out');
   if(!rawData.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>En attente des données Grist…</p></div>';return}
   if(!cfg.r.length&&!cfg.c.length&&!cfg.v.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊕</div><p>Glissez des champs vers <strong>Lignes</strong>, <strong>Colonnes</strong> et <strong>Valeurs</strong>.</p></div>';document.getElementById('stats-bar').style.display='none';return}
   var fn=document.getElementById('agg-sel').value,tots=document.getElementById('tot-sel').value,srt=document.getElementById('srt-sel').value;
+  var calc = document.getElementById('calc-sel').value;
   var data=filtered();
   var rKey=function(row){return(cfg.r.length?cfg.r:['__all__']).map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › ')};
   var cKey=function(row){return cfg.c.length?cfg.c.map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › '):'(valeur)'};
@@ -273,6 +317,7 @@ function buildPivot(){
   var mat={};
   rowKeys.forEach(function(r){mat[r]={};colKeys.forEach(function(c){mat[r][c]=aggFn(cm[r+'||'+c],fn)})});
   var rTot=function(r){return colKeys.reduce(function(s,c){return s+(mat[r][c]||0)},0)};
+  var cTot=function(c){return rows.reduce(function(s,r){return s+(mat[r][c]||0)},0)};
   var rows=[...rowKeys];
   if(srt==='la')rows.sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
   else if(srt==='ld')rows.sort(function(a,b){return b.localeCompare(a,'fr',{numeric:true})});
@@ -291,7 +336,70 @@ function buildPivot(){
     if(cfg.r.length){var parts=rk.split(' › ');cfg.r.forEach(function(f,i){var td=tr.insertCell();td.className='row-label';td.textContent=parts[i]||''})}
     else{var td=tr.insertCell();td.className='row-label';td.textContent=rk}
     var rs=0;
-    sCols.forEach(function(c){var td=tr.insertCell(),v=mat[rk][c];if(v===null||v===undefined){td.className='null-val';td.textContent='—'}else{td.className='val has-val';td.textContent=fmt(v,fn);rs+=v}});
+    sCols.forEach(function(c){
+  var td=tr.insertCell(),
+      v=mat[rk][c];
+	 var tr=tbody.insertRow();
+if(cfg.r.length){
+    var parts=rk.split(' › ');
+    cfg.r.forEach(function(f,i){
+        var td=tr.insertCell();
+        td.className='row-label';
+        td.textContent=parts[i]||'';
+    })
+}
+else{
+    var td=tr.insertCell();
+    td.className='row-label';
+    td.textContent=rk;
+}
+
+var rs=0;
+
+sCols.forEach(function(c){
+
+    var td = tr.insertCell(),
+        v  = mat[rk][c];
+
+    // 🔥 AJOUT EXACT ICI : drill‑down sur double‑clic
+    td.addEventListener('dblclick', function(){
+        var rowsRaw = data.filter(function(row){
+            return rKey(row) === rk && cKey(row) === c;
+        });
+        openDrill(rowsRaw);
+    });
+
+     
+
+  // valeur précédente pour Δ / Δ%
+  var prevVal=null;
+  if(calc==='delta'||calc==='pct-delta'){
+    var idx=sCols.indexOf(c);
+    if(idx>0){
+      var prevC=sCols[idx-1];
+      prevVal=mat[rk][prevC];
+    }
+  }
+
+  // appliquer le calcul dérivé
+  var derived=derivedValue(
+    calc,
+    v,
+    rTot(rk),   // total ligne
+    cTot(c),    // total colonne
+    prevVal,    // valeur précédente
+    gT2         // total global (déjà calculé dans ton script)
+  );
+
+  if(derived===null||derived===undefined){
+    td.className='null-val';
+    td.textContent='—';
+  }else{
+    td.className='val has-val';
+    td.textContent=fmt(derived,fn);
+    rs+=derived;
+  }
+});
     if(tots==='both'||tots==='r'){var td=tr.insertCell();td.className='val grand-total';td.textContent=fmt(rs,fn)}
   });
   if(tots==='both'||tots==='c'){
@@ -340,5 +448,23 @@ function exportXLSX() {
   XLSX.writeFile(wb, "tcd_grist.xlsx");
 }
 </script>
+<div id="drill-popup" style="
+  display:none;
+  position:fixed;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  background:white;
+  border:1px solid #ccc;
+  padding:20px;
+  max-height:70vh;
+  max-width:70vw;
+  overflow:auto;
+  box-shadow:0 4px 20px rgba(0,0,0,0.2);
+  z-index:9999;
+">
+  <button onclick="closeDrill()" style="float:right;">✖</button>
+  <h3>Détails</h3>
+  <div id="drill-content"></div>
+</div>
 </body>
 </html>

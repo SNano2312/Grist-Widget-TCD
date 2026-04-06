@@ -163,7 +163,9 @@
 </div>
 <script>
 var rawData=[],columns=[],colTypes={},cfg={r:[],c:[],v:[],f:[]},filterValues={},dragField=null,dragSrc=null;
+
 grist.ready({requiredAccess:'read table',columns:[]});
+
 grist.onRecords(function(records){
   if(!records||!records.length){showEmpty('Table vide.');return}
   rawData=records;
@@ -174,8 +176,15 @@ grist.onRecords(function(records){
   document.getElementById('status-text').textContent=records.length.toLocaleString('fr')+' enreg. · '+columns.length+' champs';
   renderFieldList();renderZones();buildPivot();
 });
-grist.onOptions&&grist.onOptions(function(o){if(o&&o.cfg){cfg=o.cfg;renderZones();renderFieldList();buildPivot()}});
-function showEmpty(m){document.getElementById('pivot-out').innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>'+m+'</p></div>'}
+
+grist.onOptions&&grist.onOptions(function(o){
+  if(o&&o.cfg){cfg=o.cfg;renderZones();renderFieldList();buildPivot()}
+});
+
+function showEmpty(m){
+  document.getElementById('pivot-out').innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>'+m+'</p></div>';
+}
+
 function inferTypes(){
   colTypes={};
   columns.forEach(function(col){
@@ -189,6 +198,38 @@ function inferTypes(){
     if(colTypes[col]==='n')rawData.forEach(function(r){var n=parseFloat(r[col]);r[col]=isNaN(n)?null:n});
   });
 }
+
+/* -----------------------------
+   DRILL-DOWN
+------------------------------*/
+function openDrill(rows){
+  var div=document.getElementById('drill-content');
+  div.innerHTML='<pre>'+JSON.stringify(rows,null,2)+'</pre>';
+  document.getElementById('drill-popup').style.display='block';
+}
+function closeDrill(){
+  document.getElementById('drill-popup').style.display='none';
+}
+
+/* -----------------------------
+   CALCULS DERIVÉS
+------------------------------*/
+function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal){
+  if(v===null||v===undefined) return null;
+
+  switch(type){
+    case 'pct-total': return grandTotal ? v/grandTotal : null;
+    case 'pct-row':   return rowTotal ? v/rowTotal : null;
+    case 'pct-col':   return colTotal ? v/colTotal : null;
+    case 'delta':     return prevVal!==null&&prevVal!==undefined ? v-prevVal : null;
+    case 'pct-delta': return prevVal ? (v-prevVal)/prevVal : null;
+    default:          return v;
+  }
+}
+
+/* -----------------------------
+   UI / DRAG / FILTERS
+------------------------------*/
 function renderFieldList(){
   var list=document.getElementById('field-list');
   var used=new Set(cfg.r.concat(cfg.c).concat(cfg.v).concat(cfg.f));
@@ -203,6 +244,7 @@ function renderFieldList(){
     list.appendChild(item);
   });
 }
+
 function renderZones(){
   [{key:'r',cls:'chip-r'},{key:'c',cls:'chip-c'},{key:'v',cls:'chip-v'},{key:'f',cls:'chip-f'}].forEach(function(d){
     var zone=document.getElementById('zone-'+d.key);zone.innerHTML='';
@@ -210,6 +252,7 @@ function renderZones(){
   });
   setupZones();renderFilterSelects();
 }
+
 function makeChip(field,cls,zone){
   var chip=document.createElement('div');chip.className='chip '+cls;chip.draggable=true;chip.dataset.field=field;chip.dataset.src=zone;
   chip.innerHTML='<span>'+field+'</span><button class="chip-rm">×</button>';
@@ -221,6 +264,7 @@ function makeChip(field,cls,zone){
   });
   return chip;
 }
+
 function setupZones(){
   document.querySelectorAll('.drop-zone').forEach(function(z){
     z.addEventListener('dragover',function(e){e.preventDefault();z.classList.add('drag-over')});
@@ -234,11 +278,14 @@ function setupZones(){
     });
   });
 }
+
 function saveOpts(){grist.setOptions&&grist.setOptions({cfg:cfg})}
+
 function initFV(field){
   var vals=[...new Set(rawData.map(function(r){return r[field]}).filter(function(v){return v!==null&&v!==undefined&&v!==''}))].sort(function(a,b){return String(a).localeCompare(String(b),'fr',{numeric:true})});
   filterValues[field]={opts:vals,sel:'__all__'};
 }
+
 function renderFilterSelects(){
   var sec=document.getElementById('filter-values-section'),list=document.getElementById('filter-values-list');
   if(!cfg.f.length){sec.style.display='none';return}
@@ -253,7 +300,20 @@ function renderFilterSelects(){
     row.appendChild(lb);row.appendChild(sel);list.appendChild(row);
   });
 }
-function filtered(){return rawData.filter(function(row){return cfg.f.every(function(field){var fv=filterValues[field];if(!fv||fv.sel==='__all__')return true;return String(row[field])===fv.sel})})}
+
+function filtered(){
+  return rawData.filter(function(row){
+    return cfg.f.every(function(field){
+      var fv=filterValues[field];
+      if(!fv||fv.sel==='__all__')return true;
+      return String(row[field])===fv.sel;
+    });
+  });
+}
+
+/* -----------------------------
+   AGGREGATION + FORMAT
+------------------------------*/
 function aggFn(arr,fn){
   if(!arr||!arr.length)return null;
   if(fn==='sum')return arr.reduce(function(s,v){return s+v},0);
@@ -262,190 +322,240 @@ function aggFn(arr,fn){
   if(fn==='min')return Math.min.apply(null,arr);
   if(fn==='max')return Math.max.apply(null,arr);
 }
+
 function fmt(v,fn){
   if(v===null||v===undefined)return'—';
   if(fn==='cnt')return Math.round(v).toLocaleString('fr');
   if(Number.isInteger(v))return v.toLocaleString('fr');
   return parseFloat(v.toFixed(2)).toLocaleString('fr');
 }
-function derivedValue(type, v, rowTotal, colTotal, prevVal, grandTotal) {
-  if (v === null || v === undefined) return null;
 
-  switch(type) {
-    case 'pct-total':
-      return grandTotal ? v / grandTotal : null;
-    case 'pct-row':
-      return rowTotal ? v / rowTotal : null;
-    case 'pct-col':
-      return colTotal ? v / colTotal : null;
-    case 'delta':
-      return (prevVal !== null && prevVal !== undefined) ? v - prevVal : null;
-    case 'pct-delta':
-      return prevVal ? (v - prevVal) / prevVal : null;
-    default:
-      return v;
-  }
-}
-function cTot(c) {
-  var f0 = cfg.v[0];
-  return rows.reduce(function(sum, r){
-    var v = mat[r][c] && mat[r][c][f0];
-    return sum + (v || 0);
-  }, 0);
-}
-function openDrill(rows) {
-    var div = document.getElementById('drill-content');
-    div.innerHTML = '<pre>' + JSON.stringify(rows, null, 2) + '</pre>';
-    document.getElementById('drill-popup').style.display = 'block';
-}
-
-function closeDrill() {
-    document.getElementById('drill-popup').style.display = 'none';
-}
+/* -----------------------------
+   BUILD PIVOT (VERSION PROPRE)
+------------------------------*/
 function buildPivot(){
   var out=document.getElementById('pivot-out');
-  if(!rawData.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>En attente des données Grist…</p></div>';return}
-  if(!cfg.r.length&&!cfg.c.length&&!cfg.v.length){out.innerHTML='<div class="empty-state"><div class="empty-icon">⊕</div><p>Glissez des champs vers <strong>Lignes</strong>, <strong>Colonnes</strong> et <strong>Valeurs</strong>.</p></div>';document.getElementById('stats-bar').style.display='none';return}
-  var fn=document.getElementById('agg-sel').value,tots=document.getElementById('tot-sel').value,srt=document.getElementById('srt-sel').value;
-  var calc = document.getElementById('calc-sel').value;
+
+  if(!rawData.length){
+    out.innerHTML='<div class="empty-state"><div class="empty-icon">⊞</div><p>En attente des données Grist…</p></div>';
+    return;
+  }
+
+  if(!cfg.r.length&&!cfg.c.length&&!cfg.v.length){
+    out.innerHTML='<div class="empty-state"><div class="empty-icon">⊕</div><p>Glissez des champs vers <strong>Lignes</strong>, <strong>Colonnes</strong> et <strong>Valeurs</strong>.</p></div>';
+    document.getElementById('stats-bar').style.display='none';
+    return;
+  }
+
+  var fn=document.getElementById('agg-sel').value,
+      tots=document.getElementById('tot-sel').value,
+      srt=document.getElementById('srt-sel').value,
+      calc=document.getElementById('calc-sel').value;
+
   var data=filtered();
-  var rKey=function(row){return(cfg.r.length?cfg.r:['__all__']).map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › ')};
-  var cKey=function(row){return cfg.c.length?cfg.c.map(function(f){var v=row[f];return v===null||v===undefined?'(vide)':String(v)}).join(' › '):'(valeur)'};
-  var rowKeys=[...new Set(data.map(rKey))],colKeys=cfg.c.length?[...new Set(data.map(cKey))]:['(valeur)'];
+
+  var rKey=function(row){
+    return (cfg.r.length?cfg.r:['__all__']).map(function(f){
+      var v=row[f];
+      return v===null||v===undefined?'(vide)':String(v);
+    }).join(' › ');
+  };
+
+  var cKey=function(row){
+    return cfg.c.length
+      ? cfg.c.map(function(f){
+          var v=row[f];
+          return v===null||v===undefined?'(vide)':String(v);
+        }).join(' › ')
+      : '(valeur)';
+  };
+
+  var rowKeys=[...new Set(data.map(rKey))],
+      colKeys=cfg.c.length?[...new Set(data.map(cKey))]:['(valeur)'];
+
   var cm={};
-  data.forEach(function(row){var r=rKey(row),c=cKey(row),k=r+'||'+c;if(!cm[k])cm[k]=[];var val=cfg.v.length?row[cfg.v[0]]:1;cm[k].push(typeof val==='number'?val:(parseFloat(val)||0))});
+  data.forEach(function(row){
+    var r=rKey(row),c=cKey(row),k=r+'||'+c;
+    if(!cm[k])cm[k]=[];
+    var val=cfg.v.length?row[cfg.v[0]]:1;
+    cm[k].push(typeof val==='number'?val:(parseFloat(val)||0));
+  });
+
   var mat={};
-  rowKeys.forEach(function(r){mat[r]={};colKeys.forEach(function(c){mat[r][c]=aggFn(cm[r+'||'+c],fn)})});
-  var rTot=function(r){return colKeys.reduce(function(s,c){return s+(mat[r][c]||0)},0)};
-  var cTot=function(c){return rows.reduce(function(s,r){return s+(mat[r][c]||0)},0)};
+  rowKeys.forEach(function(r){
+    mat[r]={};
+    colKeys.forEach(function(c){
+      mat[r][c]=aggFn(cm[r+'||'+c],fn);
+    });
+  });
+
+  var rTot=function(r){
+    return colKeys.reduce(function(s,c){return s+(mat[r][c]||0)},0);
+  };
+
   var rows=[...rowKeys];
+
   if(srt==='la')rows.sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
   else if(srt==='ld')rows.sort(function(a,b){return b.localeCompare(a,'fr',{numeric:true})});
   else if(srt==='vd')rows.sort(function(a,b){return rTot(b)-rTot(a)});
   else rows.sort(function(a,b){return rTot(a)-rTot(b)});
+
   var sCols=[...colKeys].sort(function(a,b){return a.localeCompare(b,'fr',{numeric:true})});
-  var t=document.createElement('table');t.className='pvt-table';
+
+  var gT2=rows.reduce(function(s,r){return s+rTot(r)},0);
+
+  function cTot(c){
+    return rows.reduce(function(sum,r){return sum+(mat[r][c]||0)},0);
+  }
+
+  var t=document.createElement('table');
+  t.className='pvt-table';
   var thead=t.createTHead(),tbody=t.createTBody(),tfoot=t.createTFoot();
-  var hr=thead.insertRow(),rhC=Math.max(cfg.r.length,1);
-  if(cfg.r.length){cfg.r.forEach(function(f){var th=document.createElement('th');th.className='row-h';th.textContent=f;th.style.minWidth='110px';hr.appendChild(th)})}
-  else{var th=document.createElement('th');th.className='row-h';th.textContent=cfg.v[0]||'—';hr.appendChild(th)}
-  sCols.forEach(function(c){var th=document.createElement('th');th.className='col-h';th.textContent=c;th.style.minWidth='90px';hr.appendChild(th)});
-  if(tots==='both'||tots==='r'){var th=document.createElement('th');th.className='col-h grand-total';th.textContent='Total';hr.appendChild(th)}
+
+  var hr=thead.insertRow();
+  if(cfg.r.length){
+    cfg.r.forEach(function(f){
+      var th=document.createElement('th');
+      th.className='row-h';
+      th.textContent=f;
+      th.style.minWidth='110px';
+      hr.appendChild(th);
+    });
+  } else {
+    var th=document.createElement('th');
+    th.className='row-h';
+    th.textContent=cfg.v[0]||'—';
+    hr.appendChild(th);
+  }
+
+  sCols.forEach(function(c){
+    var th=document.createElement('th');
+    th.className='col-h';
+    th.textContent=c;
+    th.style.minWidth='90px';
+    hr.appendChild(th);
+  });
+
+  if(tots==='both'||tots==='r'){
+    var th=document.createElement('th');
+    th.className='col-h grand-total';
+    th.textContent='Total';
+    hr.appendChild(th);
+  }
+
   rows.forEach(function(rk){
     var tr=tbody.insertRow();
-    if(cfg.r.length){var parts=rk.split(' › ');cfg.r.forEach(function(f,i){var td=tr.insertCell();td.className='row-label';td.textContent=parts[i]||''})}
-    else{var td=tr.insertCell();td.className='row-label';td.textContent=rk}
-    var rs=0;
-    sCols.forEach(function(c){
-  var td=tr.insertCell(),
-      v=mat[rk][c];
-	 var tr=tbody.insertRow();
-if(cfg.r.length){
-    var parts=rk.split(' › ');
-    cfg.r.forEach(function(f,i){
+
+    if(cfg.r.length){
+      var parts=rk.split(' › ');
+      cfg.r.forEach(function(f,i){
         var td=tr.insertCell();
         td.className='row-label';
         td.textContent=parts[i]||'';
-    })
-}
-else{
-    var td=tr.insertCell();
-    td.className='row-label';
-    td.textContent=rk;
-}
+      });
+    } else {
+      var td=tr.insertCell();
+      td.className='row-label';
+      td.textContent=rk;
+    }
 
-var rs=0;
+    var rs=0;
 
-sCols.forEach(function(c){
+    sCols.forEach(function(c){
+      var td=tr.insertCell(),
+          v=mat[rk][c];
 
-    var td = tr.insertCell(),
-        v  = mat[rk][c];
-
-    // 🔥 AJOUT EXACT ICI : drill‑down sur double‑clic
-    td.addEventListener('dblclick', function(){
-        var rowsRaw = data.filter(function(row){
-            return rKey(row) === rk && cKey(row) === c;
+      td.addEventListener('dblclick',function(){
+        var rowsRaw=rawData.filter(function(row){
+          return rKey(row)===rk && cKey(row)===c;
         });
         openDrill(rowsRaw);
+      });
+
+      var prevVal=null;
+      if(calc==='delta'||calc==='pct-delta'){
+        var idx=sCols.indexOf(c);
+        if(idx>0){
+          var prevC=sCols[idx-1];
+          prevVal=mat[rk][prevC];
+        }
+      }
+
+      var derived=derivedValue(calc,v,rTot(rk),cTot(c),prevVal,gT2);
+
+      if(derived===null||derived===undefined){
+        td.className='null-val';
+        td.textContent='—';
+      } else {
+        td.className='val has-val';
+        td.textContent=fmt(derived,fn);
+        rs+= (typeof derived==='number'?derived:0);
+      }
     });
 
-     
+    if(tots==='both'||tots==='r'){
+      var td=tr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(rs,fn);
+    }
+  });
 
-  // valeur précédente pour Δ / Δ%
-  var prevVal=null;
-  if(calc==='delta'||calc==='pct-delta'){
-    var idx=sCols.indexOf(c);
-    if(idx>0){
-      var prevC=sCols[idx-1];
-      prevVal=mat[rk][prevC];
+  if(tots==='both'||tots==='c'){
+    var fr=tfoot.insertRow();
+    var th=document.createElement('th');
+    th.className='row-h grand-total';
+    th.textContent='Total';
+    fr.appendChild(th);
+
+    sCols.forEach(function(c){
+      var td=fr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(cTot(c),fn);
+    });
+
+    if(tots==='both'){
+      var td=fr.insertCell();
+      td.className='val grand-total';
+      td.textContent=fmt(gT2,fn);
     }
   }
 
-  // appliquer le calcul dérivé
-  var derived=derivedValue(
-    calc,
-    v,
-    rTot(rk),   // total ligne
-    cTot(c),    // total colonne
-    prevVal,    // valeur précédente
-    gT2         // total global (déjà calculé dans ton script)
-  );
+  out.innerHTML='';
+  out.appendChild(t);
 
-  if(derived===null||derived===undefined){
-    td.className='null-val';
-    td.textContent='—';
-  }else{
-    td.className='val has-val';
-    td.textContent=fmt(derived,fn);
-    rs+=derived;
-  }
-});
-    if(tots==='both'||tots==='r'){var td=tr.insertCell();td.className='val grand-total';td.textContent=fmt(rs,fn)}
-  });
-  if(tots==='both'||tots==='c'){
-    var fr=tfoot.insertRow(),th=document.createElement('th');th.colSpan=rhC;th.textContent='Total';fr.appendChild(th);
-    var gT=0;
-    sCols.forEach(function(c){var s=rows.reduce(function(sum,r){return sum+(mat[r][c]||0)},0);gT+=s;var td=fr.insertCell();td.textContent=fmt(s,fn)});
-    if(tots==='both'){var td=fr.insertCell();td.className='grand-total';td.textContent=fmt(gT,fn)}
-  }
-  out.innerHTML='';out.appendChild(t);
-  var gT2=rows.reduce(function(s,r){return s+rTot(r)},0);
   document.getElementById('stats-bar').style.display='flex';
   document.getElementById('st-rows').textContent=rows.length.toLocaleString('fr');
   document.getElementById('st-cols').textContent=sCols.length.toLocaleString('fr');
   document.getElementById('st-cells').textContent=(rows.length*sCols.length).toLocaleString('fr');
   document.getElementById('st-total').textContent=fmt(gT2,fn);
 }
-function exportXLSX() {
-  var table = document.querySelector('.pvt-table');
-  if (!table) return;
 
-  // Convertit le tableau HTML → feuille Excel
-  var wb = XLSX.utils.book_new();
-  var ws = XLSX.utils.table_to_sheet(table, {
-    raw: true
-  });
+/* -----------------------------
+   EXPORT XLSX
+------------------------------*/
+function exportXLSX(){
+  var table=document.querySelector('.pvt-table');
+  if(!table)return;
 
-  // Ajuste automatiquement la largeur des colonnes
-  var range = XLSX.utils.decode_range(ws['!ref']);
-  var colWidths = [];
-  for (var C = range.s.c; C <= range.e.c; ++C) {
-    var maxWidth = 10;
-    for (var R = range.s.r; R <= range.e.r; ++R) {
-      var cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
-      if (!cell) continue;
-      var text = String(cell.v);
-      maxWidth = Math.max(maxWidth, text.length + 2);
+  var wb=XLSX.utils.book_new();
+  var ws=XLSX.utils.table_to_sheet(table,{raw:true});
+
+  var range=XLSX.utils.decode_range(ws['!ref']);
+  var colWidths=[];
+  for(var C=range.s.c;C<=range.e.c;++C){
+    var maxWidth=10;
+    for(var R=range.s.r;R<=range.e.r;++R){
+      var cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(!cell)continue;
+      var text=String(cell.v);
+      maxWidth=Math.max(maxWidth,text.length+2);
     }
-    colWidths.push({ wch: maxWidth });
+    colWidths.push({wch:maxWidth});
   }
-  ws['!cols'] = colWidths;
+  ws['!cols']=colWidths;
 
-  // Ajoute la feuille au classeur
-  XLSX.utils.book_append_sheet(wb, ws, "TCD");
-
-  // Téléchargement
-  XLSX.writeFile(wb, "tcd_grist.xlsx");
+  XLSX.utils.book_append_sheet(wb,ws,"TCD");
+  XLSX.writeFile(wb,"tcd_grist.xlsx");
 }
 </script>
 <div id="drill-popup" style="
